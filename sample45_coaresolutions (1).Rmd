@@ -1,0 +1,221 @@
+---
+title: "COA_sample40"
+author: "Olivia Enriquez"
+date: "2023-01-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#install.packages("stm")
+library(stm)
+
+#install.packages("pdftools")
+library(pdftools)
+
+#install.packages("tm")
+library(tm)
+
+library(quanteda)
+``` 
+
+```{r convert files into readable text}
+#converting the pdf into a readable text
+#working directory must be set to where the pdf files are saved
+#file must also be saved in the file
+#First, pdf files are loaded into R and converted into readable text. Your directory must be set to where the files are stored. 
+
+files <- list.files(pattern = "pdf$")
+resolutions<- lapply(files, pdf_text)
+```
+
+
+
+```{r list stop words}
+#list(stop_words)
+```
+
+```{r clean text}
+
+corp <- Corpus(URISource(files),
+               readerControl = list(reader = readPDF))
+
+corp <- tm_map(corp, removePunctuation, ucp = TRUE)
+
+#edited stopwords file "stopwords.dat" found in file browserto add words austin, whereas, city
+resolution.tdm<- DocumentTermMatrix(corp, 
+                                   control = 
+                                     list(stopwords = TRUE,
+                                          removePunctuation = TRUE,
+                                          tolower = TRUE,
+                                          stemming = TRUE,
+                                          removeNumbers = TRUE,
+                                          bounds = list(global = c(3, Inf))))
+
+#To inspect and see what the terms look like. 
+inspect(resolution.tdm)
+#inspect(corp)
+```
+```{r stopwords}
+#stopwords()
+```
+
+
+### STM package
+~~~~
+
+```{r clean data for analysis}
+#construct a table with one row per document including the metadata
+library(tidytext)
+library(lubridate)
+corp_tidy<-tidy(corp)
+as.POSIXlt(corp_tidy$datetimestamp, format="%d%b%Y %H:%M:%S")
+#as.numeric(corp_tidy$datetimestamp)
+#as.Date(corp_tidy$datetimestamp)
+#str(corp_tidy$datetimestamp)
+#create new variable in dataset
+corp_tidy$date<-as.numeric(corp_tidy$datetimestamp)
+```
+
+
+```{r convert dataframe to csv}
+write.csv(corp_tidy,"clean_40resolutions.csv",row.names=FALSE)
+#from this I was able to edit the metadata manually
+#did not clean, instead just uploaded into the next step
+```
+
+```{r prep documents for analysis}
+#specify where the metadata is
+#one step to clean up the data
+#created a new csv manually 
+#changed from data.csv to clean_tidy_dataframe.csv
+data<- read.csv('clean_40resolutions.csv')
+#to remove empty and NA data
+data <- data[!apply(is.na(data) | data == "", 1, all),]#head(data)
+```
+
+```{r process data}
+processed<-(textProcessor(data$text, metadata=data, customstopwords= c("austin", "city", "whereas")))
+```
+
+```{r create objects}
+out<-prepDocuments(processed$documents,processed$vocab,processed$meta)
+docus<-out$documents
+vocab<-out$vocab
+meta<-out$meta
+```
+```{r prep documents}
+#ensures right format
+plotRemoved(processed$documents, lower.thresh = seq(1, 200, by = 100))
+out <- prepDocuments(processed$documents, processed$vocab, processed$meta, lower.thresh = 15)
+```
+
+```{r test stm}
+#prevalence is only based on day
+#max iterations increased to 75 to reach convergence in model
+#had to edit this code based on the metadata that is in the document
+#k set to 8
+stmpolicy <- stm(documents = out$documents, vocab = out$vocab, K = 4, prevalence = ~ date, max.em.its = 75, data = out$meta, init.type = "Spectral")
+
+```
+
+```{r understanding the model}
+#asking R to show the top words in each topic
+labelTopics(stmpolicy, c(1,2,3,4))
+```
+
+```{r plot top topics}
+plot(stmpolicy, type="summary", xlim =c(0,1))
+#plot(stmpolicy, type = "summary")
+#same graph as above
+#graphical display of estimated topic proportions      
+```
+```{r select model}
+#will help user find a model with desirable properties in semantic coherence and exclusivity dimensions
+stmpolicyselectmodel <- selectModel(out$documents, out$vocab, K = 4, prevalence = ~ date, max.em.its = 75, data = out$meta, runs = 20, seed = 123)
+```
+
+```{r plot topics}
+plotModels(stmpolicyselectmodel, pch = c(1, 2, 3), legend.position = "bottomright")
+#topicQuality(model=stmpolicy,documents=docus)
+```
+```{r select model}
+
+selectedmodel <- stmpolicyselectmodel$runout[[1]]
+```
+
+```{r estimate effect}
+out$meta$effect<- as.factor(out$meta$datetimestamp)
+prep<-estimateEffect(1:4 ~ s(date),stmpolicy, meta=out$meta, uncertainty="None", documents=out$documents)
+summary(prep, topics=1)
+```
+
+```{r plot topic 7(funding)}
+pdf("rplot.pdf", width=20, height=12)
+par(mfrow=c(2,2)) 
+
+#Note that above the date timestamp was saved as seconds since Jan 1 1970. The seconds are manually relabeled on the x axis from seconds to years. 
+
+#Title of the graphs are copied from the labelTopics output.  
+
+plot(prep,"date", method="continuous", topics=1, model= z, printlegend=FALSE, main = "Topic 1: water, project, suppli, use, system, build, develop", xaxt="n", xlab="Time (2008-2022)")
+axis(1,at =c(1331800000,1395214000,1458700000,1522100000,1585500000,1648900000), label = c("2012","2014","2016", "2018", "2020", "2022"))
+plot(prep,"date", method="continuous", topics=2, model= z, printlegend=FALSE, main = "Topic 2: fund, support, program, feder, local, provid, public", xaxt="n", xlab="Time (2008-2022)")
+axis(1,at =c(1331800000,1395214000, 1458700000,1522100000,1585500000,1648900000), label = c("2012","2014","2016", "2018", "2020", "2022"))
+plot(prep,"date", method="continuous", topics=3, model= z, printlegend=FALSE, main = "Topic 3: hous, develop, communiti, fund, plan, afford, program", xaxt="n", xlab="Time (2008-2022)")
+axis(1,at =c(1331800000,1395214000, 1458700000,1522100000,1585500000,1648900000), label = c("2012","2014","2016", "2018", "2020", "2022"))
+plot(prep,"date", method="continuous", topics=4, model= z, printlegend=FALSE, main = "Topic 4: plan, climat, energi, council, communiti, goal, manag", xaxt="n", xlab="Time (2008-2022)")
+axis(1,at =c(1331800000,1395214000, 1458700000,1522100000,1585500000,1648900000), label = c("2012","2014","2016", "2018", "2020", "2022"))
+dev.off
+```
+### Document Matrix Code
+
+```{r}
+#words that occur at least 100 times
+findFreqTerms(resolution.tdm, lowfreq = 100, highfreq = Inf)
+
+#save the result and use it to subset the TDM
+ft<- findFreqTerms(resolution.tdm, lowfreq = 100, highfreq = Inf)
+
+#to see the print out of the subsetted TMD
+#as.matrix(resolution.tdm) 
+```
+
+```{r}
+ft.tdm <- as.matrix(resolution.tdm)
+sort(apply(ft.tdm, 1, sum), decreasing = TRUE)
+```
+```{r  save data frame}
+data<-ft.tdm
+library(topicmodels)
+```
+
+```{r topic model}
+#k is the number of topics that you want R to assign the documents to. R does not determine how many topics there are - which is a limitation of the model. 
+
+policy_topic_model<-LDA(data, k=4, control=list(seed=321))
+```
+
+```{r clean dataset}
+library(tidytext)
+library(dplyr)
+
+policy_topics<-tidy(policy_topic_model, matrix="beta")
+policy_top_terms<-policy_topics%>%
+  group_by(topic)%>%
+  top_n(6, beta) %>%
+  ungroup()%>%
+  arrange(topic, -beta)
+#n is the number of top words
+```
+
+```{r ggplot}
+library(ggplot2)
+policy_top_terms%>%
+  mutate(term=reorder(term,beta))%>%
+  mutate(topic=paste("Topic#", topic))%>%
+  ggplot(aes(term,beta,fill=factor(topic)))+geom_col(show.legend=FALSE)+facet_wrap(~topic,scales="free")+
+  theme_minimal()+theme(plot.title=element_text(hjust=0.5,size=18))+labs(title="Topic Model of City of Austin Policies", caption="Top Terms by Topic (betas)")+ylab("")+xlab("")+coord_flip()
+```
+
